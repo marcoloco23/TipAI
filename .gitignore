@@ -60,6 +60,9 @@ data/raw/
 data/processed/
 models/
 
+# CatBoost training info
+catboost_info/
+
 # VSCode
 .vscode/
 

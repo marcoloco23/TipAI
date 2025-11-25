@@ -25,18 +25,11 @@ def run_preprocess():
     preprocess_main()
 
 
-def run_features():
-    """Build features from preprocessed data."""
-    from features import main as features_main
-
-    features_main()
-
-
 def run_train():
-    """Train the models."""
-    from model import main as model_main
+    """Train advanced ensemble models with Optuna optimization."""
+    from train_advanced import main as train_main
 
-    model_main()
+    train_main()
 
 
 def run_predict(fixtures=None):
@@ -83,21 +76,18 @@ def run_predict(fixtures=None):
 
 
 def run_full_pipeline():
-    """Run the complete pipeline: download -> preprocess -> features -> train."""
+    """Run the complete pipeline: download -> preprocess -> train."""
     print("=" * 60)
     print("Running Full Football Prediction Pipeline")
     print("=" * 60)
 
-    print("\n[1/4] Downloading data...")
+    print("\n[1/3] Downloading data...")
     run_download()
 
-    print("\n[2/4] Preprocessing data...")
+    print("\n[2/3] Preprocessing data...")
     run_preprocess()
 
-    print("\n[3/4] Building features...")
-    run_features()
-
-    print("\n[4/4] Training models...")
+    print("\n[3/3] Training advanced ensemble models...")
     run_train()
 
     print("\n" + "=" * 60)
@@ -109,7 +99,7 @@ def main():
     parser = argparse.ArgumentParser(description="Football Score Prediction System")
     parser.add_argument(
         "command",
-        choices=["download", "preprocess", "features", "train", "predict", "all"],
+        choices=["download", "preprocess", "train", "predict", "all"],
         help="Command to run",
     )
     parser.add_argument(
@@ -122,8 +112,6 @@ def main():
         run_download()
     elif args.command == "preprocess":
         run_preprocess()
-    elif args.command == "features":
-        run_features()
     elif args.command == "train":
         run_train()
     elif args.command == "predict":
