@@ -1,6 +1,6 @@
 """
-Football score prediction pipeline.
-Uses ensemble of XGBoost and LightGBM with Dixon-Coles adjusted Poisson scoring.
+Football score prediction using advanced stacked ensemble.
+Uses XGBoost + LightGBM + CatBoost with meta-learner.
 """
 
 import pandas as pd
@@ -9,21 +9,20 @@ from pathlib import Path
 import joblib
 from scipy.stats import poisson
 from typing import List, Tuple, Dict
+from collections import defaultdict
 from tqdm import tqdm
 
-# Base directories
 BASE_DIR = Path(__file__).parent.parent
 PROCESSED_DATA_DIR = BASE_DIR / "data" / "processed"
 MODELS_DIR = BASE_DIR / "models"
+
+INITIAL_ELO = 1500
 
 
 def dixon_coles_adjustment(home_goals: int, away_goals: int,
                            lambda_home: float, lambda_away: float,
                            rho: float = -0.20) -> float:
-    """
-    Dixon-Coles adjustment for correlated low-scoring outcomes.
-    Reduces the probability of 0-0, 1-0, 0-1, 1-1 draws.
-    """
+    """Dixon-Coles adjustment for correlated low-scoring outcomes."""
     if home_goals == 0 and away_goals == 0:
         return 1 - lambda_home * lambda_away * rho
     elif home_goals == 0 and away_goals == 1:
@@ -36,18 +35,16 @@ def dixon_coles_adjustment(home_goals: int, away_goals: int,
 
 
 class FootballScorePredictor:
-    """Predict exact football scores using ensemble model with Dixon-Coles."""
+    """Predict exact football scores using advanced stacked ensemble."""
 
     def __init__(self):
-        self.models = None
+        self.models = {}
         self.feature_cols = None
-        self.elo_ratings = None
-        self.team_stats = None
+        self.elo_ratings = {}
+        self.team_matches = defaultdict(list)
+        self.h2h_matches = defaultdict(list)
         self.global_home_avg = 1.55
         self.global_away_avg = 1.31
-
-        # Calibration parameters (tuned for prediction variety)
-        self.lambda_scale = 2.5
         self.rho = -0.20
 
     def load_models(self, verbose: bool = True):
@@ -57,103 +54,69 @@ class FootballScorePredictor:
 
         latest_path = MODELS_DIR / "latest_models.joblib"
         if not latest_path.exists():
-            raise FileNotFoundError("No trained models found. Run: python run.py train")
+            raise FileNotFoundError("No trained models found. Run: python src/train_advanced.py")
 
         saved_paths = joblib.load(latest_path)
 
-        self.models = {}
         for name, path in saved_paths.items():
-            if name != 'feature_cols':
-                self.models[name] = joblib.load(path)
-            else:
+            if name == 'feature_cols':
                 self.feature_cols = joblib.load(path)
+            else:
+                self.models[name] = joblib.load(path)
 
         # Load Elo ratings
         elo_path = PROCESSED_DATA_DIR / "elo_ratings.csv"
         if elo_path.exists():
             elo_df = pd.read_csv(elo_path)
             self.elo_ratings = dict(zip(elo_df['team'], elo_df['elo_rating']))
-        else:
-            self.elo_ratings = {}
 
-        # Load team stats
-        featured_path = PROCESSED_DATA_DIR / "featured_matches.csv"
-        if featured_path.exists():
-            df = pd.read_csv(featured_path, parse_dates=['Date'])
-            self._build_team_stats(df, verbose)
-            recent = df.tail(2000)
-            self.global_home_avg = recent['HomeGoals'].mean()
-            self.global_away_avg = recent['AwayGoals'].mean()
+        # Build team history
+        self._build_team_history(verbose)
 
         if verbose:
             print(f"Loaded {len(self.models)} models, {len(self.elo_ratings)} teams")
 
-    def _build_team_stats(self, df: pd.DataFrame, verbose: bool = True):
-        """Build latest team statistics from historical data."""
-        self.team_stats = {}
-        all_teams = list(set(df['HomeTeam'].unique()) | set(df['AwayTeam'].unique()))
+    def _build_team_history(self, verbose: bool = True):
+        """Build team match history for feature calculation."""
+        matches_path = PROCESSED_DATA_DIR / "all_matches.csv"
+        if not matches_path.exists():
+            return
 
-        iterator = tqdm(all_teams, desc="Building team stats", disable=not verbose)
-        for team in iterator:
-            home_matches = df[df['HomeTeam'] == team].sort_values('Date')
-            away_matches = df[df['AwayTeam'] == team].sort_values('Date')
+        matches = pd.read_csv(matches_path, parse_dates=['Date']).sort_values('Date')
+        iterator = tqdm(matches.iterrows(), total=len(matches),
+                       desc="Building team stats", disable=not verbose)
 
-            # Home stats
-            if len(home_matches) > 0:
-                recent_home = home_matches.tail(10)
-                home_stats = {
-                    'goals_scored_home_avg5': recent_home.tail(5)['HomeGoals'].mean() if len(recent_home) >= 5 else recent_home['HomeGoals'].mean(),
-                    'goals_conceded_home_avg5': recent_home.tail(5)['AwayGoals'].mean() if len(recent_home) >= 5 else recent_home['AwayGoals'].mean(),
-                    'goals_scored_home_avg10': recent_home['HomeGoals'].mean(),
-                    'goals_conceded_home_avg10': recent_home['AwayGoals'].mean(),
-                    'home_wins_last5': (recent_home.tail(5)['HomeGoals'] > recent_home.tail(5)['AwayGoals']).sum() if len(recent_home) >= 5 else 2,
-                }
+        for _, row in iterator:
+            home, away = row['HomeTeam'], row['AwayTeam']
+            hg, ag, date = row['HomeGoals'], row['AwayGoals'], row['Date']
+
+            if hg > ag:
+                home_res, away_res, home_pts, away_pts = 'W', 'L', 3, 0
+            elif hg < ag:
+                home_res, away_res, home_pts, away_pts = 'L', 'W', 0, 3
             else:
-                home_stats = {
-                    'goals_scored_home_avg5': 1.5, 'goals_conceded_home_avg5': 1.0,
-                    'goals_scored_home_avg10': 1.5, 'goals_conceded_home_avg10': 1.0,
-                    'home_wins_last5': 2,
-                }
+                home_res, away_res, home_pts, away_pts = 'D', 'D', 1, 1
 
-            # Away stats
-            if len(away_matches) > 0:
-                recent_away = away_matches.tail(10)
-                away_stats = {
-                    'goals_scored_away_avg5': recent_away.tail(5)['AwayGoals'].mean() if len(recent_away) >= 5 else recent_away['AwayGoals'].mean(),
-                    'goals_conceded_away_avg5': recent_away.tail(5)['HomeGoals'].mean() if len(recent_away) >= 5 else recent_away['HomeGoals'].mean(),
-                    'goals_scored_away_avg10': recent_away['AwayGoals'].mean(),
-                    'goals_conceded_away_avg10': recent_away['HomeGoals'].mean(),
-                    'away_wins_last5': (recent_away.tail(5)['AwayGoals'] > recent_away.tail(5)['HomeGoals']).sum() if len(recent_away) >= 5 else 1,
-                }
-            else:
-                away_stats = {
-                    'goals_scored_away_avg5': 1.2, 'goals_conceded_away_avg5': 1.5,
-                    'goals_scored_away_avg10': 1.2, 'goals_conceded_away_avg10': 1.5,
-                    'away_wins_last5': 1,
-                }
+            self.team_matches[home].append({
+                'date': date, 'opponent': away, 'is_home': True,
+                'goals_for': hg, 'goals_against': ag,
+                'result': home_res, 'points': home_pts
+            })
+            self.team_matches[away].append({
+                'date': date, 'opponent': home, 'is_home': False,
+                'goals_for': ag, 'goals_against': hg,
+                'result': away_res, 'points': away_pts
+            })
 
-            # Overall form
-            all_home = df[df['HomeTeam'] == team].copy()
-            all_away = df[df['AwayTeam'] == team].copy()
-            all_home['goals_for'] = all_home['HomeGoals']
-            all_home['goals_against'] = all_home['AwayGoals']
-            all_away['goals_for'] = all_away['AwayGoals']
-            all_away['goals_against'] = all_away['HomeGoals']
-            all_matches = pd.concat([all_home[['Date', 'goals_for', 'goals_against']],
-                                    all_away[['Date', 'goals_for', 'goals_against']]]).sort_values('Date')
+            h2h_key = tuple(sorted([home, away]))
+            self.h2h_matches[h2h_key].extend([
+                {'date': date, 'team': home, 'goals_for': hg, 'goals_against': ag, 'result': home_res},
+                {'date': date, 'team': away, 'goals_for': ag, 'goals_against': hg, 'result': away_res}
+            ])
 
-            if len(all_matches) > 0:
-                recent = all_matches.tail(5)
-                form_stats = {
-                    'total_goals_avg5': recent['goals_for'].mean(),
-                    'total_conceded_avg5': recent['goals_against'].mean(),
-                    'form_points5': ((recent['goals_for'] > recent['goals_against']).sum() * 3 +
-                                    (recent['goals_for'] == recent['goals_against']).sum()),
-                }
-            else:
-                form_stats = {'total_goals_avg5': 1.4, 'total_conceded_avg5': 1.2, 'form_points5': 7}
-
-            self.team_stats[team] = {**home_stats, **away_stats, **form_stats}
+        recent = matches.tail(2000)
+        self.global_home_avg = recent['HomeGoals'].mean()
+        self.global_away_avg = recent['AwayGoals'].mean()
 
     def get_team_elo(self, team: str) -> float:
         """Get Elo rating for a team with fuzzy matching."""
@@ -163,95 +126,152 @@ class FootballScorePredictor:
         for known_team, rating in self.elo_ratings.items():
             if team_lower in known_team.lower() or known_team.lower() in team_lower:
                 return rating
-        return 1500.0
+        return INITIAL_ELO
 
-    def get_team_stats(self, team: str) -> Dict:
-        """Get statistics for a team with fuzzy matching."""
-        if team in self.team_stats:
-            return self.team_stats[team]
-        team_lower = team.lower()
-        for known_team, stats in self.team_stats.items():
-            if team_lower in known_team.lower() or known_team.lower() in team_lower:
-                return stats
-        return {
-            'goals_scored_home_avg5': 1.5, 'goals_conceded_home_avg5': 1.0,
-            'goals_scored_home_avg10': 1.5, 'goals_conceded_home_avg10': 1.0,
-            'home_wins_last5': 2, 'goals_scored_away_avg5': 1.2,
-            'goals_conceded_away_avg5': 1.5, 'goals_scored_away_avg10': 1.2,
-            'goals_conceded_away_avg10': 1.5, 'away_wins_last5': 1,
-            'total_goals_avg5': 1.4, 'total_conceded_avg5': 1.2, 'form_points5': 7,
+    def _ewm_mean(self, values: List, span: int = 5) -> float:
+        """Exponential weighted mean - recent values weighted more."""
+        if not values:
+            return 1.4
+        n = min(len(values), span * 2)
+        weights = np.exp(np.linspace(-1, 0, n))
+        return np.average(values[-n:], weights=weights)
+
+    def _get_streak(self, results: List[str]) -> Tuple[int, int]:
+        """Calculate current winning/losing streak."""
+        if not results:
+            return 0, 0
+        streak, last = 0, results[-1]
+        for r in reversed(results):
+            if r == last:
+                streak += 1
+            else:
+                break
+        return (streak, 0) if last == 'W' else (0, streak) if last == 'L' else (0, 0)
+
+    def _get_team_features(self, team: str, is_home: bool, opponent: str) -> Dict:
+        """Get comprehensive features for a team."""
+        matches = self.team_matches.get(team, [])
+        venue_matches = [m for m in matches if m['is_home'] == is_home]
+        features = {}
+
+        for window in [3, 5, 10]:
+            recent = matches[-window:] if matches else []
+            venue_recent = venue_matches[-window:] if venue_matches else []
+
+            if recent:
+                gf = [m['goals_for'] for m in recent]
+                ga = [m['goals_against'] for m in recent]
+                pts = [m['points'] for m in recent]
+                features[f'goals_for_avg{window}'] = np.mean(gf)
+                features[f'goals_against_avg{window}'] = np.mean(ga)
+                features[f'goal_diff_avg{window}'] = np.mean(gf) - np.mean(ga)
+                features[f'clean_sheets{window}'] = sum(1 for g in ga if g == 0)
+                features[f'failed_to_score{window}'] = sum(1 for g in gf if g == 0)
+                features[f'points{window}'] = sum(pts)
+                features[f'ppg{window}'] = np.mean(pts)
+            else:
+                features[f'goals_for_avg{window}'] = 1.4
+                features[f'goals_against_avg{window}'] = 1.2
+                features[f'goal_diff_avg{window}'] = 0.2
+                features[f'clean_sheets{window}'] = 1
+                features[f'failed_to_score{window}'] = 1
+                features[f'points{window}'] = window
+                features[f'ppg{window}'] = 1.0
+
+            if venue_recent:
+                features[f'venue_gf_avg{window}'] = np.mean([m['goals_for'] for m in venue_recent])
+                features[f'venue_ga_avg{window}'] = np.mean([m['goals_against'] for m in venue_recent])
+            else:
+                features[f'venue_gf_avg{window}'] = 1.5 if is_home else 1.2
+                features[f'venue_ga_avg{window}'] = 1.0 if is_home else 1.5
+
+        # EWM and streaks
+        if matches:
+            gf = [m['goals_for'] for m in matches]
+            ga = [m['goals_against'] for m in matches]
+            results = [m['result'] for m in matches]
+            features['gf_ewm'] = self._ewm_mean(gf)
+            features['ga_ewm'] = self._ewm_mean(ga)
+            features['win_streak'], features['lose_streak'] = self._get_streak(results)
+            features['momentum'] = sum(1 if r == 'W' else -1 if r == 'L' else 0 for r in results[-5:])
+        else:
+            features['gf_ewm'] = 1.4
+            features['ga_ewm'] = 1.2
+            features['win_streak'] = features['lose_streak'] = features['momentum'] = 0
+
+        features['days_rest'] = 7
+        features['attack_rating'] = features['gf_ewm'] / 1.4 if len(matches) >= 5 else 1.0
+        features['defense_rating'] = 1.2 / max(features['ga_ewm'], 0.5) if len(matches) >= 5 else 1.0
+
+        # Head-to-head
+        h2h_key = tuple(sorted([team, opponent]))
+        team_h2h = [m for m in self.h2h_matches.get(h2h_key, []) if m['team'] == team]
+        if len(team_h2h) >= 2:
+            features['h2h_gf_avg'] = np.mean([m['goals_for'] for m in team_h2h[-5:]])
+            features['h2h_ga_avg'] = np.mean([m['goals_against'] for m in team_h2h[-5:]])
+            features['h2h_wins'] = sum(1 for m in team_h2h[-5:] if m['result'] == 'W')
+        else:
+            features['h2h_gf_avg'] = features['h2h_ga_avg'] = 1.3
+            features['h2h_wins'] = 1
+
+        return features
+
+    def build_features(self, home_team: str, away_team: str) -> pd.DataFrame:
+        """Build feature DataFrame for a match (with column names to avoid warnings)."""
+        features = {
+            'home_elo': self.get_team_elo(home_team),
+            'away_elo': self.get_team_elo(away_team),
+            'elo_diff': self.get_team_elo(home_team) - self.get_team_elo(away_team),
         }
 
-    def build_features(self, home_team: str, away_team: str) -> np.ndarray:
-        """Build feature vector for a match."""
-        home_elo = self.get_team_elo(home_team)
-        away_elo = self.get_team_elo(away_team)
-        home_stats = self.get_team_stats(home_team)
-        away_stats = self.get_team_stats(away_team)
+        home_feats = self._get_team_features(home_team, is_home=True, opponent=away_team)
+        away_feats = self._get_team_features(away_team, is_home=False, opponent=home_team)
 
-        features = [
-            home_elo, away_elo, home_elo - away_elo,
-            home_stats['goals_scored_home_avg5'], home_stats['goals_conceded_home_avg5'],
-            home_stats['goals_scored_home_avg10'], home_stats['goals_conceded_home_avg10'],
-            home_stats['home_wins_last5'],
-            away_stats['goals_scored_away_avg5'], away_stats['goals_conceded_away_avg5'],
-            away_stats['goals_scored_away_avg10'], away_stats['goals_conceded_away_avg10'],
-            away_stats['away_wins_last5'],
-            home_stats['total_goals_avg5'], home_stats['total_conceded_avg5'], home_stats['form_points5'],
-            away_stats['total_goals_avg5'], away_stats['total_conceded_avg5'], away_stats['form_points5'],
-            1.3, 1.3, 0,  # h2h defaults
-        ]
-        return np.array(features).reshape(1, -1)
+        for k, v in home_feats.items():
+            features[f'home_{k}'] = v
+        for k, v in away_feats.items():
+            features[f'away_{k}'] = v
+
+        features['attack_vs_defense_home'] = home_feats['attack_rating'] * away_feats['defense_rating']
+        features['attack_vs_defense_away'] = away_feats['attack_rating'] * home_feats['defense_rating']
+        features['momentum_diff'] = home_feats['momentum'] - away_feats['momentum']
+        features['form_diff'] = home_feats.get('ppg5', 1) - away_feats.get('ppg5', 1)
+
+        # Return DataFrame with proper column order
+        if self.feature_cols:
+            return pd.DataFrame([[features.get(col, 0) for col in self.feature_cols]],
+                              columns=self.feature_cols)
+        return pd.DataFrame([features])
 
     def predict_lambda(self, home_team: str, away_team: str) -> Tuple[float, float]:
-        """Predict expected goals using team stats + model + Elo."""
+        """Predict expected goals using stacked ensemble."""
         X = self.build_features(home_team, away_team)
-        home_stats = self.get_team_stats(home_team)
-        away_stats = self.get_team_stats(away_team)
 
-        # Model predictions
         home_preds, away_preds = [], []
-        if 'xgb_home' in self.models and self.models['xgb_home'] is not None:
-            home_preds.append(self.models['xgb_home'].predict(X)[0])
-            away_preds.append(self.models['xgb_away'].predict(X)[0])
-        if 'lgb_home' in self.models and self.models['lgb_home'] is not None:
-            home_preds.append(self.models['lgb_home'].predict(X)[0])
-            away_preds.append(self.models['lgb_away'].predict(X)[0])
+        for model_type in ['xgb', 'lgb', 'cat']:
+            if f'{model_type}_home' in self.models:
+                home_preds.append(self.models[f'{model_type}_home'].predict(X)[0])
+            if f'{model_type}_away' in self.models:
+                away_preds.append(self.models[f'{model_type}_away'].predict(X)[0])
 
-        if home_preds:
-            model_home = np.mean(home_preds)
-            model_away = np.mean(away_preds)
+        if 'meta_home' in self.models and home_preds:
+            meta_home = np.array(home_preds).reshape(1, -1)
+            meta_away = np.array(away_preds).reshape(1, -1)
+            lambda_home = self.models['meta_home'].predict(meta_home)[0]
+            lambda_away = self.models['meta_away'].predict(meta_away)[0]
+        elif home_preds:
+            lambda_home = np.mean(home_preds)
+            lambda_away = np.mean(away_preds)
         else:
-            model_home, model_away = 1.5, 1.2
+            lambda_home = self.global_home_avg
+            lambda_away = self.global_away_avg
 
-        # Team-based lambda using attack vs defense
-        home_attack = home_stats['goals_scored_home_avg5']
-        away_defense = away_stats['goals_conceded_away_avg5']
-        team_home = (home_attack + away_defense) / 2
+        # Scale for variance
+        scale = 1.8
+        lambda_home = self.global_home_avg + (lambda_home - self.global_home_avg) * scale
+        lambda_away = self.global_away_avg + (lambda_away - self.global_away_avg) * scale
 
-        away_attack = away_stats['goals_scored_away_avg5']
-        home_defense = home_stats['goals_conceded_home_avg5']
-        team_away = (away_attack + home_defense) / 2
-
-        # Elo-based adjustment: strong away teams should concede less
-        home_elo = self.get_team_elo(home_team)
-        away_elo = self.get_team_elo(away_team)
-        elo_diff = home_elo - away_elo
-
-        # Elo modifier: if away team is strong (negative elo_diff), reduce home lambda
-        # Range: -300 to +300 elo diff -> -0.3 to +0.3 lambda adjustment
-        elo_modifier = elo_diff / 1000
-
-        # Blend: 50% model, 30% team stats, 20% Elo adjustment
-        blended_home = 0.5 * model_home + 0.3 * team_home + 0.2 * (self.global_home_avg + elo_modifier)
-        blended_away = 0.5 * model_away + 0.3 * team_away + 0.2 * (self.global_away_avg - elo_modifier)
-
-        # Scale with reduced factor (2.0 instead of 2.5 for less extreme predictions)
-        scale = 2.0
-        scaled_home = self.global_home_avg + (blended_home - self.global_home_avg) * scale
-        scaled_away = self.global_away_avg + (blended_away - self.global_away_avg) * scale
-
-        return max(0.5, scaled_home), max(0.4, scaled_away)
+        return max(0.5, lambda_home), max(0.4, lambda_away)
 
     def predict_score_probabilities(self, home_team: str, away_team: str,
                                    max_goals: int = 8) -> Tuple[np.ndarray, float, float]:
@@ -272,38 +292,22 @@ class FootballScorePredictor:
         """Predict match score with confidence."""
         prob_matrix, lambda_home, lambda_away = self.predict_score_probabilities(home_team, away_team)
 
-        # Get top scores
         flat_probs = [(h, a, prob_matrix[h, a]) for h in range(8) for a in range(8)]
         flat_probs.sort(key=lambda x: x[2], reverse=True)
 
-        # Calculate outcome probabilities
         home_win_prob = np.sum(np.tril(prob_matrix, -1))
         draw_prob = np.sum(np.diag(prob_matrix))
         away_win_prob = np.sum(np.triu(prob_matrix, 1))
 
-        # Smart score selection: pick most likely outcome, then best score within it
-        # This ensures we predict wins when a team is favored, not always 1-1
+        # Select score based on most likely outcome
         if home_win_prob >= draw_prob and home_win_prob >= away_win_prob:
-            # Home win is most likely - pick best home win score
-            home_wins = [(h, a, p) for h, a, p in flat_probs if h > a]
-            if home_wins:
-                predicted_home, predicted_away, confidence = home_wins[0]
-            else:
-                predicted_home, predicted_away, confidence = flat_probs[0]
-        elif away_win_prob >= draw_prob and away_win_prob >= home_win_prob:
-            # Away win is most likely - pick best away win score
-            away_wins = [(h, a, p) for h, a, p in flat_probs if a > h]
-            if away_wins:
-                predicted_home, predicted_away, confidence = away_wins[0]
-            else:
-                predicted_home, predicted_away, confidence = flat_probs[0]
+            scores = [(h, a, p) for h, a, p in flat_probs if h > a]
+        elif away_win_prob >= draw_prob:
+            scores = [(h, a, p) for h, a, p in flat_probs if a > h]
         else:
-            # Draw is most likely - pick best draw score
-            draws = [(h, a, p) for h, a, p in flat_probs if h == a]
-            if draws:
-                predicted_home, predicted_away, confidence = draws[0]
-            else:
-                predicted_home, predicted_away, confidence = flat_probs[0]
+            scores = [(h, a, p) for h, a, p in flat_probs if h == a]
+
+        predicted_home, predicted_away, confidence = scores[0] if scores else flat_probs[0]
 
         return {
             'home_team': home_team,
@@ -321,44 +325,32 @@ class FootballScorePredictor:
         }
 
     def predict_batch(self, fixtures: List[Tuple[str, str]], verbose: bool = True) -> List[Dict]:
-        """Predict multiple matches with progress bar."""
-        results = []
+        """Predict multiple matches."""
         iterator = tqdm(fixtures, desc="Predicting", disable=not verbose)
-        for home_team, away_team in iterator:
-            results.append(self.predict(home_team, away_team))
-        return results
+        return [self.predict(home, away) for home, away in iterator]
 
     def format_prediction(self, result: Dict) -> str:
-        """Format prediction result for display."""
+        """Format prediction for display."""
         return (f"{result['home_team']} vs {result['away_team']}: "
                 f"{result['predicted_score']} ({result['confidence']:.1%})")
 
 
-def main():
-    """Test predictor."""
+if __name__ == "__main__":
     predictor = FootballScorePredictor()
     predictor.load_models()
 
     fixtures = [
+        ("Borussia Dortmund", "Villarreal"),
         ("Chelsea", "Barcelona"),
-        ("Real Madrid", "Bayern München"),
-        ("Liverpool", "Inter Milan"),
-        ("Manchester City", "Paris Saint-Germain"),
-        ("Arsenal", "Juventus"),
-        ("Bayern München", "Bologna"),
-        ("Bayer Leverkusen", "Celtic"),
+        ("Arsenal", "Bayern München"),
+        ("Manchester City", "Bayer Leverkusen"),
     ]
 
     print("\n" + "="*60)
     print("PREDICTIONS")
     print("="*60 + "\n")
 
-    results = predictor.predict_batch(fixtures)
-    for result in results:
+    for result in predictor.predict_batch(fixtures):
         print(f"{result['home_team']} vs {result['away_team']}: {result['predicted_score']} ({result['confidence']:.1%})")
         print(f"  λ={result['lambda_home']:.2f}/{result['lambda_away']:.2f}  "
               f"H:{result['home_win_prob']:.0%} D:{result['draw_prob']:.0%} A:{result['away_win_prob']:.0%}\n")
-
-
-if __name__ == "__main__":
-    main()
