@@ -55,10 +55,12 @@ coverage.xml
 .dmypy.json
 dmypy.json
 
-# Data and model files
+# Data files (raw and large processed files)
 data/raw/
-data/processed/
-models/
+data/processed/all_matches.csv
+data/processed/featured_matches.csv
+
+# Keep models/ and elo_ratings.csv for deployment
 
 # CatBoost training info
 catboost_info/
