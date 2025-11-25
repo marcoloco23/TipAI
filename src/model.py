@@ -14,6 +14,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 try:
     import xgboost as xgb
+
     HAS_XGB = True
 except ImportError:
     HAS_XGB = False
@@ -21,6 +22,7 @@ except ImportError:
 
 try:
     import lightgbm as lgb
+
     HAS_LGB = True
 except ImportError:
     HAS_LGB = False
@@ -33,16 +35,28 @@ MODELS_DIR = BASE_DIR / "models"
 
 # Feature columns used for training
 FEATURE_COLS = [
-    'home_elo', 'away_elo', 'elo_diff',
-    'home_goals_scored_home_avg5', 'home_goals_conceded_home_avg5',
-    'home_goals_scored_home_avg10', 'home_goals_conceded_home_avg10',
-    'home_home_wins_last5',
-    'away_goals_scored_away_avg5', 'away_goals_conceded_away_avg5',
-    'away_goals_scored_away_avg10', 'away_goals_conceded_away_avg10',
-    'away_away_wins_last5',
-    'home_total_goals_avg5', 'home_total_conceded_avg5', 'home_form_points5',
-    'away_total_goals_avg5', 'away_total_conceded_avg5', 'away_form_points5',
-    'h2h_home_goals_avg', 'h2h_away_goals_avg', 'h2h_matches',
+    "home_elo",
+    "away_elo",
+    "elo_diff",
+    "home_goals_scored_home_avg5",
+    "home_goals_conceded_home_avg5",
+    "home_goals_scored_home_avg10",
+    "home_goals_conceded_home_avg10",
+    "home_home_wins_last5",
+    "away_goals_scored_away_avg5",
+    "away_goals_conceded_away_avg5",
+    "away_goals_scored_away_avg10",
+    "away_goals_conceded_away_avg10",
+    "away_away_wins_last5",
+    "home_total_goals_avg5",
+    "home_total_conceded_avg5",
+    "home_form_points5",
+    "away_total_goals_avg5",
+    "away_total_conceded_avg5",
+    "away_form_points5",
+    "h2h_home_goals_avg",
+    "h2h_away_goals_avg",
+    "h2h_matches",
 ]
 
 
@@ -55,28 +69,24 @@ def train_xgboost_model(X_train, y_train, X_val, y_val, target_name):
     print(f"\nTraining XGBoost for {target_name}...")
 
     params = {
-        'objective': 'count:poisson',
-        'eval_metric': 'poisson-nloglik',
-        'max_depth': 6,
-        'learning_rate': 0.05,
-        'n_estimators': 500,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'min_child_weight': 5,
-        'reg_alpha': 0.1,
-        'reg_lambda': 1.0,
-        'random_state': 42,
-        'n_jobs': -1,
+        "objective": "count:poisson",
+        "eval_metric": "poisson-nloglik",
+        "max_depth": 6,
+        "learning_rate": 0.05,
+        "n_estimators": 500,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_weight": 5,
+        "reg_alpha": 0.1,
+        "reg_lambda": 1.0,
+        "random_state": 42,
+        "n_jobs": -1,
     }
 
     model = xgb.XGBRegressor(**params)
 
     # Train with early stopping
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=100
-    )
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
 
     # Evaluate
     y_pred = model.predict(X_val)
@@ -97,28 +107,29 @@ def train_lightgbm_model(X_train, y_train, X_val, y_val, target_name):
     print(f"\nTraining LightGBM for {target_name}...")
 
     params = {
-        'objective': 'poisson',
-        'metric': 'poisson',
-        'max_depth': 6,
-        'learning_rate': 0.05,
-        'n_estimators': 500,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'min_child_samples': 20,
-        'reg_alpha': 0.1,
-        'reg_lambda': 1.0,
-        'random_state': 42,
-        'n_jobs': -1,
-        'verbose': -1,
+        "objective": "poisson",
+        "metric": "poisson",
+        "max_depth": 6,
+        "learning_rate": 0.05,
+        "n_estimators": 500,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_samples": 20,
+        "reg_alpha": 0.1,
+        "reg_lambda": 1.0,
+        "random_state": 42,
+        "n_jobs": -1,
+        "verbose": -1,
     }
 
     model = lgb.LGBMRegressor(**params)
 
     # Train with early stopping
     model.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         eval_set=[(X_val, y_val)],
-        callbacks=[lgb.early_stopping(50, verbose=False)]
+        callbacks=[lgb.early_stopping(50, verbose=False)],
     )
 
     # Evaluate
@@ -133,12 +144,12 @@ def train_lightgbm_model(X_train, y_train, X_val, y_val, target_name):
 
 def train_ensemble(df, feature_cols):
     """Train ensemble of XGBoost and LightGBM models."""
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("Training Ensemble Models")
-    print("="*50)
+    print("=" * 50)
 
     # Prepare data
-    df = df.sort_values('Date').reset_index(drop=True)
+    df = df.sort_values("Date").reset_index(drop=True)
 
     # Time-based split: Use last 20% for validation
     split_idx = int(len(df) * 0.8)
@@ -153,38 +164,46 @@ def train_ensemble(df, feature_cols):
     X_train = train_df[feature_cols].values
     X_val = val_df[feature_cols].values
 
-    y_train_home = train_df['HomeGoals'].values
-    y_train_away = train_df['AwayGoals'].values
-    y_val_home = val_df['HomeGoals'].values
-    y_val_away = val_df['AwayGoals'].values
+    y_train_home = train_df["HomeGoals"].values
+    y_train_away = train_df["AwayGoals"].values
+    y_val_home = val_df["HomeGoals"].values
+    y_val_away = val_df["AwayGoals"].values
 
     # Train models
     models = {}
 
     # XGBoost models
-    models['xgb_home'] = train_xgboost_model(X_train, y_train_home, X_val, y_val_home, 'HomeGoals')
-    models['xgb_away'] = train_xgboost_model(X_train, y_train_away, X_val, y_val_away, 'AwayGoals')
+    models["xgb_home"] = train_xgboost_model(
+        X_train, y_train_home, X_val, y_val_home, "HomeGoals"
+    )
+    models["xgb_away"] = train_xgboost_model(
+        X_train, y_train_away, X_val, y_val_away, "AwayGoals"
+    )
 
     # LightGBM models
-    models['lgb_home'] = train_lightgbm_model(X_train, y_train_home, X_val, y_val_home, 'HomeGoals')
-    models['lgb_away'] = train_lightgbm_model(X_train, y_train_away, X_val, y_val_away, 'AwayGoals')
+    models["lgb_home"] = train_lightgbm_model(
+        X_train, y_train_home, X_val, y_val_home, "HomeGoals"
+    )
+    models["lgb_away"] = train_lightgbm_model(
+        X_train, y_train_away, X_val, y_val_away, "AwayGoals"
+    )
 
     # Evaluate ensemble
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("Ensemble Evaluation")
-    print("="*50)
+    print("=" * 50)
 
     # Get ensemble predictions
     home_preds = []
     away_preds = []
 
-    if models['xgb_home'] is not None:
-        home_preds.append(models['xgb_home'].predict(X_val))
-        away_preds.append(models['xgb_away'].predict(X_val))
+    if models["xgb_home"] is not None:
+        home_preds.append(models["xgb_home"].predict(X_val))
+        away_preds.append(models["xgb_away"].predict(X_val))
 
-    if models['lgb_home'] is not None:
-        home_preds.append(models['lgb_home'].predict(X_val))
-        away_preds.append(models['lgb_away'].predict(X_val))
+    if models["lgb_home"] is not None:
+        home_preds.append(models["lgb_home"].predict(X_val))
+        away_preds.append(models["lgb_away"].predict(X_val))
 
     if home_preds:
         ensemble_home = np.mean(home_preds, axis=0)
@@ -201,17 +220,22 @@ def train_ensemble(df, feature_cols):
         pred_home_rounded = np.round(ensemble_home).astype(int)
         pred_away_rounded = np.round(ensemble_away).astype(int)
 
-        exact_correct = ((pred_home_rounded == y_val_home) &
-                        (pred_away_rounded == y_val_away)).sum()
+        exact_correct = (
+            (pred_home_rounded == y_val_home) & (pred_away_rounded == y_val_away)
+        ).sum()
         exact_accuracy = exact_correct / len(y_val_home)
 
         print(f"Exact Score Accuracy: {exact_accuracy:.2%}")
 
         # Result accuracy (H/D/A)
-        actual_result = np.where(y_val_home > y_val_away, 'H',
-                                np.where(y_val_home < y_val_away, 'A', 'D'))
-        pred_result = np.where(pred_home_rounded > pred_away_rounded, 'H',
-                              np.where(pred_home_rounded < pred_away_rounded, 'A', 'D'))
+        actual_result = np.where(
+            y_val_home > y_val_away, "H", np.where(y_val_home < y_val_away, "A", "D")
+        )
+        pred_result = np.where(
+            pred_home_rounded > pred_away_rounded,
+            "H",
+            np.where(pred_home_rounded < pred_away_rounded, "A", "D"),
+        )
 
         result_accuracy = (actual_result == pred_result).mean()
         print(f"Result Accuracy (H/D/A): {result_accuracy:.2%}")
@@ -236,7 +260,7 @@ def save_models(models, feature_cols):
     # Save feature columns
     feature_path = MODELS_DIR / f"feature_cols_{timestamp}.joblib"
     joblib.dump(feature_cols, feature_path)
-    saved_paths['feature_cols'] = feature_path
+    saved_paths["feature_cols"] = feature_path
 
     # Save latest paths for easy loading
     latest_path = MODELS_DIR / "latest_models.joblib"
@@ -257,7 +281,7 @@ def load_latest_models():
 
     models = {}
     for name, path in saved_paths.items():
-        if name != 'feature_cols':
+        if name != "feature_cols":
             models[name] = joblib.load(path)
         else:
             feature_cols = joblib.load(path)
@@ -274,7 +298,7 @@ def main():
         print(f"Error: {featured_path} not found. Run features.py first.")
         return None
 
-    df = pd.read_csv(featured_path, parse_dates=['Date'])
+    df = pd.read_csv(featured_path, parse_dates=["Date"])
     print(f"Loaded {len(df)} featured matches")
 
     # Train ensemble

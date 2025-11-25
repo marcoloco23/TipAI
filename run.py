@@ -14,24 +14,28 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 def run_download():
     """Download all data."""
     from download_data import main as download_main
+
     download_main()
 
 
 def run_preprocess():
     """Preprocess downloaded data."""
     from preprocess import main as preprocess_main
+
     preprocess_main()
 
 
 def run_features():
     """Build features from preprocessed data."""
     from features import main as features_main
+
     features_main()
 
 
 def run_train():
     """Train the models."""
     from model import main as model_main
+
     model_main()
 
 
@@ -43,9 +47,9 @@ def run_predict(fixtures=None):
     predictor.load_models()
 
     if fixtures:
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Football Score Predictions")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
         for fixture in fixtures:
             try:
@@ -65,9 +69,9 @@ def run_predict(fixtures=None):
             ("Borussia Dortmund", "Atletico Madrid"),
         ]
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Football Score Predictions (Example Champions League Fixtures)")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
         for home, away in default_fixtures:
             result = predictor.predict(home, away)
@@ -80,9 +84,9 @@ def run_predict(fixtures=None):
 
 def run_full_pipeline():
     """Run the complete pipeline: download -> preprocess -> features -> train."""
-    print("="*60)
+    print("=" * 60)
     print("Running Full Football Prediction Pipeline")
-    print("="*60)
+    print("=" * 60)
 
     print("\n[1/4] Downloading data...")
     run_download()
@@ -96,31 +100,35 @@ def run_full_pipeline():
     print("\n[4/4] Training models...")
     run_train()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Pipeline complete! You can now run predictions.")
-    print("="*60)
+    print("=" * 60)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Football Score Prediction System')
-    parser.add_argument('command', choices=['download', 'preprocess', 'features', 'train', 'predict', 'all'],
-                       help='Command to run')
-    parser.add_argument('--fixtures', nargs='*',
-                       help='Fixtures to predict (format: "Home vs Away")')
+    parser = argparse.ArgumentParser(description="Football Score Prediction System")
+    parser.add_argument(
+        "command",
+        choices=["download", "preprocess", "features", "train", "predict", "all"],
+        help="Command to run",
+    )
+    parser.add_argument(
+        "--fixtures", nargs="*", help='Fixtures to predict (format: "Home vs Away")'
+    )
 
     args = parser.parse_args()
 
-    if args.command == 'download':
+    if args.command == "download":
         run_download()
-    elif args.command == 'preprocess':
+    elif args.command == "preprocess":
         run_preprocess()
-    elif args.command == 'features':
+    elif args.command == "features":
         run_features()
-    elif args.command == 'train':
+    elif args.command == "train":
         run_train()
-    elif args.command == 'predict':
+    elif args.command == "predict":
         run_predict(args.fixtures)
-    elif args.command == 'all':
+    elif args.command == "all":
         run_full_pipeline()
 
 

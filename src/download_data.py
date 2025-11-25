@@ -20,14 +20,23 @@ LEAGUES = {
     "SP1": "Spain La Liga",
     "D1": "Germany Bundesliga",
     "I1": "Italy Serie A",
-    "F1": "France Ligue 1"
+    "F1": "France Ligue 1",
 }
 
 # Seasons to download (last 10)
 SEASONS = [
-    "1516", "1617", "1718", "1819", "1920",
-    "2021", "2122", "2223", "2324", "2425"
+    "1516",
+    "1617",
+    "1718",
+    "1819",
+    "1920",
+    "2021",
+    "2122",
+    "2223",
+    "2324",
+    "2425",
 ]
+
 
 def download_football_data_co_uk():
     """Download CSV files from football-data.co.uk for top 5 leagues."""
@@ -53,7 +62,7 @@ def download_football_data_co_uk():
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
 
-                with open(filepath, 'wb') as f:
+                with open(filepath, "wb") as f:
                     f.write(response.content)
                 downloaded += 1
                 time.sleep(0.5)  # Be nice to the server
@@ -86,7 +95,7 @@ def download_champions_league_data():
         response = requests.get(cl_url, timeout=30)
         response.raise_for_status()
 
-        with open(filepath, 'wb') as f:
+        with open(filepath, "wb") as f:
             f.write(response.content)
         print("  Downloaded successfully")
         return True
@@ -102,11 +111,26 @@ def download_historical_cl_data():
 
     # footballcsv European Champions League data
     cl_urls = [
-        ("https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2023-24/cl.csv", "cl_2023_24.csv"),
-        ("https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2022-23/cl.csv", "cl_2022_23.csv"),
-        ("https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2021-22/cl.csv", "cl_2021_22.csv"),
-        ("https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2020-21/cl.csv", "cl_2020_21.csv"),
-        ("https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2019-20/cl.csv", "cl_2019_20.csv"),
+        (
+            "https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2023-24/cl.csv",
+            "cl_2023_24.csv",
+        ),
+        (
+            "https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2022-23/cl.csv",
+            "cl_2022_23.csv",
+        ),
+        (
+            "https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2021-22/cl.csv",
+            "cl_2021_22.csv",
+        ),
+        (
+            "https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2020-21/cl.csv",
+            "cl_2020_21.csv",
+        ),
+        (
+            "https://raw.githubusercontent.com/footballcsv/cache.footballdata/refs/heads/master/1-europe.clubs/2019-20/cl.csv",
+            "cl_2019_20.csv",
+        ),
     ]
 
     downloaded = 0
@@ -122,7 +146,7 @@ def download_historical_cl_data():
             response = requests.get(url, timeout=30)
             response.raise_for_status()
 
-            with open(filepath, 'wb') as f:
+            with open(filepath, "wb") as f:
                 f.write(response.content)
             downloaded += 1
             time.sleep(0.5)
@@ -136,9 +160,9 @@ def download_historical_cl_data():
 
 def verify_downloads():
     """Verify downloaded files and show summary."""
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("Download Summary")
-    print("="*50)
+    print("=" * 50)
 
     csv_files = list(RAW_DATA_DIR.glob("*.csv"))
     print(f"Total CSV files: {len(csv_files)}")
@@ -146,7 +170,7 @@ def verify_downloads():
     total_matches = 0
     for filepath in sorted(csv_files):
         try:
-            df = pd.read_csv(filepath, encoding='utf-8', on_bad_lines='skip')
+            df = pd.read_csv(filepath, encoding="utf-8", on_bad_lines="skip")
             matches = len(df)
             total_matches += matches
             print(f"  {filepath.name}: {matches} matches")
@@ -162,9 +186,9 @@ def main():
     # Create directories
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("="*50)
+    print("=" * 50)
     print("Football Score Prediction - Data Download")
-    print("="*50)
+    print("=" * 50)
 
     # Download from each source
     download_football_data_co_uk()
