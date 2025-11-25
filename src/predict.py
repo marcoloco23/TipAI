@@ -56,19 +56,24 @@ class FootballScorePredictor:
         if verbose:
             print("Loading models...")
 
-        latest_path = MODELS_DIR / "latest_models.joblib"
-        if not latest_path.exists():
+        # Load models directly from MODELS_DIR (works on both local and cloud)
+        model_names = ["xgb_home", "xgb_away", "lgb_home", "lgb_away",
+                       "cat_home", "cat_away", "meta_home", "meta_away"]
+
+        for name in model_names:
+            path = MODELS_DIR / f"{name}.joblib"
+            if path.exists():
+                self.models[name] = joblib.load(path)
+
+        # Load feature columns
+        feature_path = MODELS_DIR / "feature_cols.joblib"
+        if feature_path.exists():
+            self.feature_cols = joblib.load(feature_path)
+
+        if not self.models:
             raise FileNotFoundError(
                 "No trained models found. Run: python src/train_advanced.py"
             )
-
-        saved_paths = joblib.load(latest_path)
-
-        for name, path in saved_paths.items():
-            if name == "feature_cols":
-                self.feature_cols = joblib.load(path)
-            else:
-                self.models[name] = joblib.load(path)
 
         # Load Elo ratings
         elo_path = PROCESSED_DATA_DIR / "elo_ratings.csv"
